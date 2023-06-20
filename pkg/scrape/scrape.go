@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -23,6 +24,12 @@ var (
 		"webp": true,
 	}
 )
+
+func init() {
+	log.SetOutput(os.Stdout)
+	log.SetFormatter(&log.TextFormatter{})
+	log.SetLevel(log.DebugLevel)
+}
 
 const (
 	DefaultTimeout       = 10 // 秒
@@ -140,13 +147,16 @@ func (c *Comics) GetDesc() error {
 
 func (c *Comics) GetCoverUrl() error {
 	c.rootDoc.Find(".container .content-wrap .content .article-header .c-img img").Each(func(i int, s *goquery.Selection) {
+		logField := log.Fields{"content": "cover-url"}
+
 		src, exist := s.Attr("src")
 		if !exist {
-			fmt.Printf("no src attr\n")
+			// fmt.Printf("no src attr\n")
+			log.WithFields(logField).Info("no src attr")
 			return
 		}
 
-		fmt.Printf("index:%v, src:%v\n", i, src)
+		// fmt.Printf("index:%v, src:%v\n", i, src)
 		c.Url = src
 	})
 
@@ -156,18 +166,23 @@ func (c *Comics) GetCoverUrl() error {
 func (c *Comics) GetLastModifyTime() error {
 	c.rootDoc.Find(".container .content-wrap .content .article-header .article-meta li").Each(func(i int, s *goquery.Selection) {
 		text := s.Text()
-		fmt.Printf("last modify time:%v\n", text)
+		text = strings.Trim(text, " \n\t\r")
+
+		logField := log.Fields{"content": "last-modify-time", "text": text}
 
 		items := strings.Split(text, ":")
 		if len(items) != 2 {
+			log.WithFields(logField).Info("invalid format")
 			return
 		}
 
 		if _, err := time.ParseInLocation("2006-01-02", items[1], time.Local); err != nil {
+			log.WithFields(logField).Info("no include yyyy-mm-dd time")
 			return
 		}
 
 		c.LastModifyTime = items[1]
+		log.WithFields(logField).Debugf("lastModifyTime:%v", c.LastModifyTime)
 	})
 
 	return nil
@@ -240,6 +255,8 @@ func (c *Comics) GetHtmlContent(url string) ([]byte, error) {
 		return badMan, nil
 	}
 
+	logField := log.Fields{"content": "html-content", "url": url}
+
 	client := http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
@@ -250,6 +267,7 @@ func (c *Comics) GetHtmlContent(url string) ([]byte, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		log.WithFields(logField).WithField("position", "new http request failed").Error(err)
 		return nil, err
 	}
 
@@ -265,6 +283,7 @@ func (c *Comics) GetHtmlContent(url string) ([]byte, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
+		log.WithFields(logField).WithField("position", "http request failed").Error(err)
 		return nil, err
 	}
 
@@ -272,9 +291,11 @@ func (c *Comics) GetHtmlContent(url string) ([]byte, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.WithFields(logField).WithField("position", "read body failed").Error(err)
 		return nil, err
 	}
 
+	log.WithFields(logField).Debug("success")
 	return body, nil
 }
 

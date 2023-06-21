@@ -2,10 +2,7 @@ package scrape
 
 import (
 	"bytes"
-	"crypto/tls"
-	"fmt"
-	"io"
-	"net/http"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -35,6 +32,7 @@ const (
 	DefaultTimeout       = 10 // 秒
 	DefaultMetadataPath  = "./data/meta"
 	DefaultImageDataPath = "./data/images"
+	DefaultPageDataPath  = "./data/pages"
 )
 
 type Comics struct {
@@ -43,6 +41,11 @@ type Comics struct {
 	ImageDataPath  string
 	Timeout        int
 	Url            string
+	Number         int
+	Root           string
+	ImagePath      string
+	PagePath       string
+	MetaPath       string
 	Title          string
 	EnTitle        string
 	Desc           string
@@ -52,6 +55,7 @@ type Comics struct {
 	ImageUrls      []string
 	htmlContent    []byte
 	rootDoc        *goquery.Document
+	pageDocs       map[string]*goquery.Document
 }
 
 func New(url string) *Comics {
@@ -67,11 +71,12 @@ func New(url string) *Comics {
 }
 
 func NewWithConfig(c *Config) *Comics {
-	fmt.Fprintf(os.Stderr, "scrape config: %+v", c)
+	log.Debugf("scrape config: %+v", c)
 
 	return &Comics{
 		Debug:     c.Debug,
 		Url:       c.Url,
+		Root:      c.RootPath,
 		PageUrls:  []string{},
 		ImageUrls: []string{},
 	}
@@ -82,11 +87,34 @@ func (c *Comics) Scrape() error {
 		return err
 	}
 
-	if err := c.GetBasicInfo(); err != nil {
+	if err := c.GetMainBasicInfo(); err != nil {
+		return err
+	}
+
+	if err := c.GetMainPageUrls(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (c *Comics) Init() error {
+	logField := log.Fields{"content": "scrape-init"}
+
+	u, err := url.ParseRequestURI(c.Url)
+	if err != nil {
+		log.WithFields(logField).WithField("position", "ParseImageURIFailed").Error(err)
+		return err
+	}
+
+	dir, file := filepath.Split(u.Path)
+	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
+
+	if !strings.HasSuffix(file, ".html") {
+		log.WithFields(logField).WithField("position", "NotFindSuffix").Error("no html suffix")
+		return errors.New("no html suffix")
+	}
+
 }
 
 func (c *Comics) GetMainContent() error {
@@ -94,7 +122,7 @@ func (c *Comics) GetMainContent() error {
 		err error
 	)
 
-	c.htmlContent, err = c.GetHtmlContent(c.Url)
+	c.htmlContent, err = DownloadPage(c.Url, c.Debug)
 	if err != nil {
 		return err
 	}
@@ -107,8 +135,8 @@ func (c *Comics) GetMainContent() error {
 	return nil
 }
 
-// GetBasicInfo Get Comic's title, cover, desc etc.
-func (c *Comics) GetBasicInfo() error {
+// GetMainBasicInfo Get Comic's title, cover, desc etc.
+func (c *Comics) GetMainBasicInfo() error {
 	if err := c.GetTitle(); err != nil {
 		return err
 	}
@@ -129,9 +157,11 @@ func (c *Comics) GetBasicInfo() error {
 }
 
 func (c *Comics) GetTitle() error {
-	c.rootDoc.Find(".container .content-wrap .content .article-header .article-title").Each(func(i int, s *goquery.Selection) {
+	c.rootDoc.Find(".container .content-wrap .content .article-header .article-title a").Each(func(i int, s *goquery.Selection) {
 		c.Title = s.Text()
+		c.Title = strings.Trim(c.Title, " \n\t\r")
 		c.EnTitle = ParseCnToEn(c.Title)
+		log.WithField("content", "title").Infof("title:%v, en-title:%v", c.Title, c.EnTitle)
 	})
 
 	return nil
@@ -140,6 +170,8 @@ func (c *Comics) GetTitle() error {
 func (c *Comics) GetDesc() error {
 	c.rootDoc.Find(".container .content-wrap .content .article-header .dis").Each(func(i int, s *goquery.Selection) {
 		c.Desc = s.Text()
+		c.Desc = strings.Trim(c.Desc, " \n\t\r")
+		log.WithField("content", "desc").Infof("desc:%v", c.Desc)
 	})
 
 	return nil
@@ -151,13 +183,12 @@ func (c *Comics) GetCoverUrl() error {
 
 		src, exist := s.Attr("src")
 		if !exist {
-			// fmt.Printf("no src attr\n")
 			log.WithFields(logField).Info("no src attr")
 			return
 		}
 
-		// fmt.Printf("index:%v, src:%v\n", i, src)
 		c.Url = src
+		log.WithFields(logField).Infof("cover url:%v", c.Url)
 	})
 
 	return nil
@@ -188,26 +219,29 @@ func (c *Comics) GetLastModifyTime() error {
 	return nil
 }
 
-func (c *Comics) GetPageUrl(mainUrl string) ([]string, error) {
+func (c *Comics) GetMainPageUrls() error {
 	existPages := make(map[string]bool, 8)
 	pageUrls := make([]string, 0, 8)
-	pageUrls = append(pageUrls, mainUrl)
+	pageUrls = append(pageUrls, c.Url)
 
 	c.rootDoc.Find(".container .content-wrap .content .article-content .article-paging .post-page-numbers").Each(func(i int, s *goquery.Selection) {
+		logField := log.Fields{"content": "get-page-url"}
+
 		href, exist := s.Attr("href")
 		if !exist {
-			fmt.Printf("no href attr\n")
+			log.WithFields(logField).WithField("position", "NoHrefAttr").Info("no href attr")
 			return
 		}
 
-		fmt.Printf("index:%v, href:%v\n", i, href)
+		log.WithFields(logField).Infof("i:%v,href:%v", i, href)
 
+		logField["href"] = href
 		if existPages[href] {
-			fmt.Printf("href:%v, already processed\n", href)
+			log.WithFields(logField).WithField("position", "AlreadyExist").Info("already process")
 			return
 		}
 
-		if !IsValidPageUrl(href) {
+		if !c.IsValidPageUrl(href) {
 			return
 		}
 
@@ -215,30 +249,45 @@ func (c *Comics) GetPageUrl(mainUrl string) ([]string, error) {
 		existPages[href] = true
 	})
 
-	// fmt.Printf("page urls:%+v\n", pageUrls)
 	c.PageUrls = pageUrls
-	return pageUrls, nil
+	return nil
 }
 
-func (c *Comics) GetImageUrl(pageUrl string) ([]string, error) {
+func (c *Comics) GetPageUrlsContent() error {
+
+}
+
+func (c *Comics) GetImageUrls(pageUrls []string) error {
+	for _, pageUrl := range pageUrls {
+		imageUrls, err := getImageUrl(pageUrl)
+		if err != nil {
+
+		}
+	}
+}
+
+func getImageUrl(pageUrl string) ([]string, error) {
 	existImages := make(map[string]bool, 8)
 	imageUrls := make([]string, 0, 8)
 
 	c.rootDoc.Find(".container .content-wrap .content .article-content p img").Each(func(i int, s *goquery.Selection) {
+		logField := log.Fields{"content": "get-image-url"}
+
 		src, exist := s.Attr("src")
 		if !exist {
-			fmt.Printf("no src attr\n")
+			log.WithFields(logField).WithField("position", "NoSrcAttr").Info("no src attr")
 			return
 		}
 
-		fmt.Printf("index:%v, src:%v\n", i, src)
+		log.WithFields(logField).Infof("index:%v, src:%v", i, src)
 
+		logField["src"] = src
 		if existImages[src] {
-			fmt.Printf("href:%v, already processed\n", src)
+			log.WithFields(logField).WithField("position", "AlreadyExist").Info("already process")
 			return
 		}
 
-		if !IsValidImageUrl(src) {
+		if !c.IsValidImageUrl(src) {
 			return
 		}
 
@@ -246,165 +295,63 @@ func (c *Comics) GetImageUrl(pageUrl string) ([]string, error) {
 		existImages[src] = true
 	})
 
-	c.ImageUrls = imageUrls
 	return imageUrls, nil
 }
 
-func (c *Comics) GetHtmlContent(url string) ([]byte, error) {
-	if c.Debug {
-		return badMan, nil
-	}
+func (c *Comics) IsValidPageUrl(pageUrl string) bool {
+	var (
+		pagePrefix = "page"
+		pageSuffix = ".html"
+		logField   = log.Fields{"content": "verify-page-url", "page-url": pageUrl}
+	)
 
-	logField := log.Fields{"content": "html-content", "url": url}
-
-	client := http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		log.WithFields(logField).WithField("position", "new http request failed").Error(err)
-		return nil, err
-	}
-
-	req.Header.Add("Host", "www.san499.com")
-	req.Header.Add("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0")
-	req.Header.Add("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
-	req.Header.Add("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Add("Connection", "keep-alive")
-	req.Header.Add("Referer", "https://www.san499.com/")
-	req.Header.Add("Sec-Fetch-Mode", "no-cors")
-	req.Header.Add("Sec-Fetch-Site", "cross-site")
-	req.Header.Add("TE", "trailers")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		log.WithFields(logField).WithField("position", "http request failed").Error(err)
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.WithFields(logField).WithField("position", "read body failed").Error(err)
-		return nil, err
-	}
-
-	log.WithFields(logField).Debug("success")
-	return body, nil
-}
-
-func IsValidPageUrl(pageUrl string) bool {
 	u, err := url.ParseRequestURI(pageUrl)
 	if err != nil {
-		fmt.Printf("parse url:%v failed, err:%v\n", pageUrl, err)
+		log.WithFields(logField).WithField("position", "ParseImageURIFailed").Error(err)
 		return false
 	}
 
-	fmt.Printf("url:%v, path:%v\n", pageUrl, u.Path)
 	dir, file := filepath.Split(u.Path)
-	fmt.Printf("dir:%v, file:%v\n", dir, file)
+	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
 
 	file = strings.ToLower(file)
-	if !strings.HasPrefix(file, "page") {
-		fmt.Printf("invalid page url, no page prefix\n")
+	if !strings.HasPrefix(file, pagePrefix) {
+		log.WithFields(logField).WithField("position", "NotFindPrefix").Errorf("no %v prefix", pagePrefix)
 		return false
 	}
 
-	if !strings.HasSuffix(file, ".html") {
-		fmt.Printf("invalid page url, no html suffix\n")
+	if !strings.HasSuffix(file, pageSuffix) {
+		log.WithFields(logField).WithField("position", "NotFindSuffix").Error("no %v suffix", pageSuffix)
 		return false
 	}
 
 	return true
 }
 
-func IsValidImageUrl(imageUrl string) bool {
+func (c *Comics) IsValidImageUrl(imageUrl string) bool {
+	logField := log.Fields{"content": "verify-image-url", "image-url": imageUrl}
+
 	u, err := url.ParseRequestURI(imageUrl)
 	if err != nil {
-		fmt.Printf("parse url:%v failed, err:%v\n", imageUrl, err)
+		log.WithFields(logField).WithField("position", "ParseImageURIFailed").Error(err)
 		return false
 	}
 
-	fmt.Printf("url:%v, path:%v\n", imageUrl, u.Path)
 	dir, file := filepath.Split(u.Path)
-	fmt.Printf("dir:%v, file:%v\n", dir, file)
+	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
 
 	file = strings.ToLower(file)
 	pos := strings.LastIndex(file, ".")
 	if pos == -1 {
-		fmt.Printf("image url:%v, invalid suffix\n", imageUrl)
+		log.WithFields(logField).WithField("position", "NotFindAnyDot").Error("invalid suffix")
 		return false
 	}
 
 	suffix := file[pos+1:]
 	if !SupportImageSuffix[suffix] {
-		fmt.Printf("invalid image url, not support suffix:[%v]\n", suffix)
+		log.WithFields(logField).WithField("position", "UnsupportedImageSuffix").Errorf("suffix:%v", suffix)
 		return false
 	}
 
 	return true
-}
-
-func DownloadImage(imageUrl string) error {
-	client := http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
-	req, err := http.NewRequest("GET", imageUrl, nil)
-	if err != nil {
-		return err
-	}
-
-	u, err := url.ParseRequestURI(imageUrl)
-	if err != nil {
-		fmt.Printf("parse url:%v failed, err:%v\n", imageUrl, err)
-		return err
-	}
-
-	req.Header.Add("Host", u.Host)
-	req.Header.Add("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0")
-	req.Header.Add("Accept", "image/avif,image/webp,*/*")
-	req.Header.Add("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
-	req.Header.Add("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Add("Connection", "keep-alive")
-	req.Header.Add("Referer", "https://www.san499.com/")
-	req.Header.Add("Sec-Fetch-Dest", "image")
-	req.Header.Add("Sec-Fetch-Mode", "no-cors")
-	req.Header.Add("Sec-Fetch-Site", "cross-site")
-	req.Header.Add("TE", "trailers")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("response size:", len(body))
-
-	dir, file := filepath.Split(u.Path)
-	fmt.Printf("dir:%v, file:%v\n", dir, file)
-
-	if err = os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
-		return err
-	}
-
-	if err = os.WriteFile(u.Path, body, 0666); err != nil {
-		return err
-	}
-
-	return nil
 }

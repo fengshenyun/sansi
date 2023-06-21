@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	url     string
-	timeout int
+	url      string
+	rootPath string
+	timeout  int
 )
 
 func NewScrapeCommand() *cobra.Command {
@@ -22,6 +23,7 @@ func NewScrapeCommand() *cobra.Command {
 
 	ac.Flags().StringVar(&url, "url", "", "Scrape target url")
 	ac.Flags().IntVar(&timeout, "timeout", 10, "Set connect timeout")
+	ac.Flags().StringVar(&rootPath, "root-path", "./data", "Set root path")
 
 	return ac
 }
@@ -31,6 +33,7 @@ func scrapeCommandFunc(cmd *cobra.Command, args []string) {
 	sc.Debug = globalFlags.Debug
 	sc.Url = url
 	sc.Timeout = timeout
+	sc.RootPath = rootPath
 
 	if err := scrape.NewWithConfig(sc).Scrape(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

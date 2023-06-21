@@ -1,7 +1,8 @@
 package scrape
 
 type Config struct {
-	Debug   bool
-	Url     string
-	Timeout int
+	Debug    bool
+	Url      string
+	Timeout  int
+	RootPath string
 }

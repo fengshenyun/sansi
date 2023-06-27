@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -60,7 +59,7 @@ func DownloadPage(url string, debug bool) ([]byte, error) {
 	return body, nil
 }
 
-func DownloadImage(imageUrl string, path string) error {
+func DownloadImage(imagePath, imageUrl string) error {
 	client := http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
@@ -111,15 +110,7 @@ func DownloadImage(imageUrl string, path string) error {
 
 	log.WithFields(logField).Debugf("response size:%v", len(body))
 
-	dir, file := filepath.Split(u.Path)
-	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
-
-	if err = os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
-		log.WithFields(logField).WithField("position", "MkDirFailed").Error(err)
-		return err
-	}
-
-	if err = os.WriteFile(u.Path, body, 0666); err != nil {
+	if err = os.WriteFile(imagePath, body, 0666); err != nil {
 		log.WithFields(logField).WithField("position", "WriteImageToFileFailed").Error(err)
 		return err
 	}

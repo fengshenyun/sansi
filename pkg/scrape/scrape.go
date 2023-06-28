@@ -197,9 +197,9 @@ func (c *Comics) parseTitle() error {
 		c.Title = s.Text()
 		c.Title = strings.Trim(c.Title, " \n\t\r")
 		c.EnTitle = ParseCnToEn(c.Title)
-		log.WithField("content", "title").Infof("title:%v, en-title:%v", c.Title, c.EnTitle)
 	})
 
+	log.Debugf("title:%v, enTitle:%v", c.Title, c.EnTitle)
 	return nil
 }
 
@@ -207,9 +207,9 @@ func (c *Comics) parseDesc() error {
 	c.rootDoc.Find(".container .content-wrap .content .article-header .dis").Each(func(i int, s *goquery.Selection) {
 		c.Desc = s.Text()
 		c.Desc = strings.Trim(c.Desc, " \n\t\r")
-		log.WithField("content", "desc").Infof("desc:%v", c.Desc)
 	})
 
+	log.Debugf("desc:%v", c.Desc)
 	return nil
 }
 
@@ -224,9 +224,9 @@ func (c *Comics) parseCoverUrl() error {
 		}
 
 		c.CoverUrl = src
-		log.WithFields(logField).Infof("cover url:%v", c.CoverUrl)
 	})
 
+	log.Debugf("cover url:%v", c.CoverUrl)
 	return nil
 }
 
@@ -249,9 +249,9 @@ func (c *Comics) parseLastModifyTime() error {
 		}
 
 		c.LastModifyTime = items[1]
-		log.WithFields(logField).Debugf("lastModifyTime:%v", c.LastModifyTime)
 	})
 
+	log.Debugf("lastModifyTime:%v", c.LastModifyTime)
 	return nil
 }
 
@@ -266,7 +266,13 @@ func (c *Comics) WriteMetadata() error {
 	buf.WriteString("简介: " + c.Desc + "\n")
 	buf.WriteString("更新时间: " + c.LastModifyTime + "\n")
 
-	return c.writeFile(metaPath, buf.Bytes())
+	if err := c.writeFile(metaPath, buf.Bytes()); err != nil {
+		log.Errorf("write metadata failed, err:%v", err)
+		return err
+	}
+
+	log.Debugf("write metadata success.")
+	return nil
 }
 
 func (c *Comics) ParseMainPageUrls() error {
@@ -294,11 +300,13 @@ func (c *Comics) ParseMainPageUrls() error {
 		}
 
 		if !c.IsValidPageUrl(href) {
+			log.WithFields(logField).Info("invalid page url")
 			return
 		}
 
 		pageUrls = append(pageUrls, href)
 		existPages[href] = true
+		log.Debugf("sub page url:%v", href)
 	})
 
 	c.PageUrls = pageUrls
@@ -316,7 +324,13 @@ func (c *Comics) writeContentMainFile() error {
 	}
 
 	contentPath := c.getContentDataPath("main")
-	return c.writeFile(contentPath, buf.Bytes())
+	if err := c.writeFile(contentPath, buf.Bytes()); err != nil {
+		log.Errorf("write data/main file failed, err:%v", err)
+		return err
+	}
+
+	log.Errorf("write data/main file success")
+	return nil
 }
 
 func (c *Comics) GetPageUrlsContent() error {
@@ -347,16 +361,19 @@ func (c *Comics) GetPageUrlsContent() error {
 func (c *Comics) getPageContent(pageUrl string) (htmlContent []byte, err error) {
 	pagePath, err := c.getPageDataPath(pageUrl)
 	if err != nil {
+		log.Errorf("pageUrl:%v, get page path failed, err:%v", pageUrl, err)
 		return
 	}
 
 	htmlContent, err = c.getPageContentInDisk(pagePath)
 	if err == nil {
+		log.Debugf("pageUrl:%v already in disk, no need download", pageUrl)
 		return
 	}
 
 	htmlContent, err = DownloadPage(pageUrl, c.Debug)
 	if err != nil {
+		log.Errorf("pageUrl:%v, download failed, err:%v", pageUrl, err)
 		return
 	}
 
@@ -364,6 +381,7 @@ func (c *Comics) getPageContent(pageUrl string) (htmlContent []byte, err error) 
 		log.Errorf("write file:%v failed, err:%v", pagePath, err)
 	}
 
+	log.Debugf("pageUrl:%v, download success", pageUrl)
 	return
 }
 

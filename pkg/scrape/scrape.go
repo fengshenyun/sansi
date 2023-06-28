@@ -2,7 +2,6 @@ package scrape
 
 import (
 	"bytes"
-	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -86,6 +86,7 @@ func NewWithConfig(cfg *Config) *Comics {
 
 func (c *Comics) Scrape() error {
 	if err := c.Validity(); err != nil {
+		log.Error(err)
 		return err
 	}
 
@@ -109,65 +110,60 @@ func (c *Comics) Scrape() error {
 		return err
 	}
 
+	if err := c.GetImagesContent(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (c *Comics) Validity() error {
-	logField := log.Fields{"content": "validity"}
-
 	if c.MainUrl == "" {
-		log.WithFields(logField).Error("empty main url")
 		return errors.New("empty main url")
 	}
 
 	u, err := url.ParseRequestURI(c.MainUrl)
 	if err != nil {
-		log.WithFields(logField).WithField("position", "ParseMainURIFailed").Error(err)
-		return err
+		return errors.Wrap(err, "parse main url failed")
 	}
 
 	dir, file := filepath.Split(u.Path)
-	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
+	log.Debugf("dir:%v, file:%v", dir, file)
 
 	if !strings.HasSuffix(file, ".html") {
-		log.WithFields(logField).Error("no html suffix")
 		return errors.New("no html suffix")
 	}
 
 	pos := strings.LastIndex(file, ".html")
 	num, err := strconv.Atoi(file[:pos])
 	if err != nil {
-		log.WithFields(logField).WithField("position", "ParseNumber").Error(err)
-		return errors.New("invalid number")
+		return errors.Wrap(err, "invalid comic number")
 	}
 
 	c.Number = num
+	log.Debugf("mainPage:%v, verified success", c.MainUrl)
 	return nil
 }
 
 func (c *Comics) GetMainContent() error {
 	var (
-		err      error
-		logField = log.Fields{"content": "main-content", "page-url": c.MainUrl}
+		err error
 	)
 
 	c.rootHtmlContent, err = DownloadPage(c.MainUrl, c.Debug)
 	if err != nil {
-		log.WithFields(logField).WithField("position", "DownloadMainPageFailed").Error(err)
-		return err
+		return errors.Wrap(err, "download main page failed")
 	}
 
 	c.rootDoc, err = goquery.NewDocumentFromReader(bytes.NewReader(c.rootHtmlContent))
 	if err != nil {
-		log.WithFields(logField).WithField("position", "ReadMainPageContentFailed").Error(err)
-		return err
+		return errors.Wrap(err, "parse main page html failed")
 	}
 
-	log.WithFields(logField).Debug("download main page success")
+	log.Debug("download main page success")
 	return nil
 }
 
-// ParseMainBasicInfo Get Comic's title, cover, desc etc.
 func (c *Comics) ParseMainBasicInfo() error {
 	if err := c.parseTitle(); err != nil {
 		return err
@@ -199,6 +195,10 @@ func (c *Comics) parseTitle() error {
 		c.EnTitle = ParseCnToEn(c.Title)
 	})
 
+	if c.Title == "" {
+		return errors.New("no title")
+	}
+
 	log.Debugf("title:%v, enTitle:%v", c.Title, c.EnTitle)
 	return nil
 }
@@ -215,16 +215,18 @@ func (c *Comics) parseDesc() error {
 
 func (c *Comics) parseCoverUrl() error {
 	c.rootDoc.Find(".container .content-wrap .content .article-header .c-img img").Each(func(i int, s *goquery.Selection) {
-		logField := log.Fields{"content": "cover-url"}
-
 		src, exist := s.Attr("src")
 		if !exist {
-			log.WithFields(logField).Info("no src attr")
+			log.Info("no src attr")
 			return
 		}
 
 		c.CoverUrl = src
 	})
+
+	if c.CoverUrl == "" {
+		return errors.New("no cover url")
+	}
 
 	log.Debugf("cover url:%v", c.CoverUrl)
 	return nil
@@ -235,16 +237,14 @@ func (c *Comics) parseLastModifyTime() error {
 		text := s.Text()
 		text = strings.Trim(text, " \n\t\r")
 
-		logField := log.Fields{"content": "last-modify-time", "text": text}
-
 		items := strings.Split(text, ":")
 		if len(items) != 2 {
-			log.WithFields(logField).Info("invalid format")
+			log.Info("invalid format")
 			return
 		}
 
 		if _, err := time.ParseInLocation("2006-01-02", items[1], time.Local); err != nil {
-			log.WithFields(logField).Info("no include yyyy-mm-dd time")
+			log.Info("no include yyyy-mm-dd time")
 			return
 		}
 
@@ -283,24 +283,21 @@ func (c *Comics) ParseMainPageUrls() error {
 
 	pageUrls = append(pageUrls, c.MainUrl)
 	c.rootDoc.Find(".container .content-wrap .content .article-content .article-paging .post-page-numbers").Each(func(i int, s *goquery.Selection) {
-		logField := log.Fields{"content": "get-main-page-url"}
-
 		href, exist := s.Attr("href")
 		if !exist {
-			log.WithFields(logField).WithField("position", "NoHrefAttr").Info("no href attr")
+			log.Info("no href attr")
 			return
 		}
 
-		log.WithFields(logField).Infof("i:%v,href:%v", i, href)
+		log.Infof("i:%v,href:%v", i, href)
 
-		logField["href"] = href
 		if existPages[href] {
-			log.WithFields(logField).WithField("position", "AlreadyExist").Info("already process")
+			log.Infof("href:%v, already process", href)
 			return
 		}
 
 		if !c.IsValidPageUrl(href) {
-			log.WithFields(logField).Info("invalid page url")
+			log.Infof("href:%v, invalid page url", href)
 			return
 		}
 
@@ -334,25 +331,21 @@ func (c *Comics) writeContentMainFile() error {
 }
 
 func (c *Comics) GetPageUrlsContent() error {
-	logField := log.Fields{"content": "get-page-content"}
-
 	for _, pageUrl := range c.PageUrls {
-		logField["page-url"] = pageUrl
-
 		htmlContent, err := c.getPageContent(pageUrl)
 		if err != nil {
-			log.WithFields(logField).WithField("position", "GetPageContent").Error(err)
+			log.Errorf("get pageUrl:%v content failed, err:%v", pageUrl, err)
 			continue
 		}
 
 		doc, err := goquery.NewDocumentFromReader(bytes.NewReader(htmlContent))
 		if err != nil {
-			log.WithFields(logField).WithField("position", "ParseHtmlContent").Error(err)
+			log.Errorf("parse pageUrl:%v content failed, err:%v", pageUrl, err)
 			continue
 		}
 
 		c.pageDocs[pageUrl] = doc
-		log.WithFields(logField).Debug("parse page content success")
+		log.Debug("pageUrl:%v, parse page content success", pageUrl)
 	}
 
 	return nil
@@ -423,23 +416,23 @@ func (c *Comics) getContentDataPath(fname string) string {
 }
 
 func (c *Comics) getPageDataPath(pageUrl string) (string, error) {
-	logField := log.Fields{"content": "page-data-path", "page-url": pageUrl}
-
 	pos := strings.LastIndex(pageUrl, "/")
 	if pos == -1 {
-		log.WithFields(logField).WithField("position", "FindLastSlash").Error("invalid page url")
+		log.Errorf("invalid pageUrl:%v", pageUrl)
 		return "", errors.New("invalid page url")
+	}
+
+	if pageUrl == c.MainUrl {
+		return filepath.Join(c.RootPath, c.EnTitle, DefaultPageDataPath, pageUrl[pos+1:]), nil
 	}
 
 	return filepath.Join(c.RootPath, c.EnTitle, DefaultPageDataPath, pageUrl[pos+1:]), nil
 }
 
 func (c *Comics) getImageDataPath(imageUrl string) (string, error) {
-	logField := log.Fields{"content": "image-data-path", "image-url": imageUrl}
-
 	u, err := url.ParseRequestURI(imageUrl)
 	if err != nil {
-		log.WithFields(logField).WithField("position", "ParseImageURIFailed").Error(err)
+		log.Errorf("imageUrl:%v, parse failed, err:%v", imageUrl, err)
 		return "", err
 	}
 
@@ -447,18 +440,18 @@ func (c *Comics) getImageDataPath(imageUrl string) (string, error) {
 }
 
 func (c *Comics) GetImageUrls() error {
-	logField := log.Fields{"content": "get-image-url"}
-
 	for pageUrl, doc := range c.pageDocs {
-		logField["page-url"] = pageUrl
-
 		imageUrls, err := c.getImageUrl(doc)
 		if err != nil {
-			return err
+			log.Errorf("pageUrl:%v, get image urls from page url failed, err:%v", pageUrl, err)
+			continue
 		}
 
+		log.Debugf("pageUrl:%v, imageUrls:%+v", pageUrl, imageUrls)
+
 		if err = c.writeContentPageFile(pageUrl, imageUrls); err != nil {
-			return err
+			log.Errorf("pageUrl:%v, write image urls to file failed, err:%v", pageUrl, err)
+			continue
 		}
 
 		c.ImageUrls = append(c.ImageUrls, imageUrls...)
@@ -486,24 +479,21 @@ func (c *Comics) getImageUrl(doc *goquery.Document) ([]string, error) {
 	imageUrls := make([]string, 0, 8)
 
 	doc.Find(".container .content-wrap .content .article-content p img").Each(func(i int, s *goquery.Selection) {
-		logField := log.Fields{"content": "get-image-url"}
-
 		src, exist := s.Attr("src")
 		if !exist {
-			log.WithFields(logField).WithField("position", "NoSrcAttr").Info("no src attr")
+			log.Info("no src attr")
 			return
 		}
 
-		log.WithFields(logField).Infof("index:%v, src:%v", i, src)
+		log.Infof("index:%v, src:%v", i, src)
 
-		logField["src"] = src
 		if existImages[src] {
-			log.WithFields(logField).WithField("position", "AlreadyExist").Info("already process")
+			log.Infof("imageUrl:%v, already process", src)
 			return
 		}
 
 		if !c.IsValidImageUrl(src) {
-			log.WithFields(logField).WithField("position", "InvalidImageUrl").Info("invalid")
+			log.Infof("imageUrl:%v, invalid image url", src)
 			return
 		}
 
@@ -539,6 +529,7 @@ func (c *Comics) GetImagesContent() error {
 
 		if err := c.getImageContent(imageUrl); err != nil {
 			log.Errorf("image url:%v, download failed, err:%v", imageUrl, err)
+			continue
 		}
 
 		log.Debugf("download image:%v success", imageUrl)
@@ -550,34 +541,36 @@ func (c *Comics) GetImagesContent() error {
 func (c *Comics) getImageContent(imageUrl string) error {
 	imagePath, err := c.getImageDataPath(imageUrl)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "get image path failed")
 	}
 
-	log.Debugf("image path:%v", imagePath)
+	log.Debugf("imageUrl:%v, imagePath:%v", imageUrl, imagePath)
 
-	if err = c.isImageExist(imagePath); err != nil {
-		return err
+	if ok := c.isImageExist(imagePath); ok {
+		log.Infof("imageUrl:%v already exist, no need download", imageUrl)
+		return nil
 	}
 
 	if err = c.downloadImageContent(imagePath, imageUrl); err != nil {
-		return err
+		return errors.Wrap(err, "download image content failed")
 	}
 
+	log.Debugf("imageUrl:%v download content success", imageUrl)
 	return nil
 }
 
-func (c *Comics) isImageExist(imagePath string) error {
+func (c *Comics) isImageExist(imagePath string) bool {
 	stat, err := os.Stat(imagePath)
 	if err != nil {
-		return err
+		return false
 	}
 
 	if stat.Size() <= 0 {
 		_ = os.Remove(imagePath)
-		return errors.New("invalid image file")
+		return false
 	}
 
-	return nil
+	return true
 }
 
 func (c *Comics) downloadImageContent(imagePath, imageUrl string) error {
@@ -588,56 +581,59 @@ func (c *Comics) IsValidPageUrl(pageUrl string) bool {
 	var (
 		pagePrefix = "page"
 		pageSuffix = ".html"
-		logField   = log.Fields{"content": "verify-page-url", "page-url": pageUrl}
 	)
+
+	if pageUrl == c.MainUrl {
+		return true
+	}
 
 	u, err := url.ParseRequestURI(pageUrl)
 	if err != nil {
-		log.WithFields(logField).WithField("position", "ParseImageURIFailed").Error(err)
+		log.Errorf("pageUrl:%v parse failed, err:%v", pageUrl, err)
 		return false
 	}
 
 	dir, file := filepath.Split(u.Path)
-	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
+	log.Debugf("pageUrl:%v, dir:%v, file:%v", pageUrl, dir, file)
 
 	file = strings.ToLower(file)
 	if !strings.HasPrefix(file, pagePrefix) {
-		log.WithFields(logField).WithField("position", "NotFindPrefix").Errorf("no %v prefix", pagePrefix)
+		log.Errorf("pageUrl:%v, no %v prefix", pageUrl, pagePrefix)
 		return false
 	}
 
 	if !strings.HasSuffix(file, pageSuffix) {
-		log.WithFields(logField).WithField("position", "NotFindSuffix").Error("no %v suffix", pageSuffix)
+		log.Errorf("pageUrl:%v, no %v suffix", pageUrl, pageSuffix)
 		return false
 	}
 
+	log.Debugf("pageUrl:%v verify success", pageUrl)
 	return true
 }
 
 func (c *Comics) IsValidImageUrl(imageUrl string) bool {
-	logField := log.Fields{"content": "verify-image-url", "image-url": imageUrl}
-
 	u, err := url.ParseRequestURI(imageUrl)
 	if err != nil {
-		log.WithFields(logField).WithField("position", "ParseImageURIFailed").Error(err)
+		log.Errorf("imageUrl:%v parse failed, err:%v", imageUrl, err)
 		return false
 	}
 
 	dir, file := filepath.Split(u.Path)
-	log.WithFields(logField).Debugf("dir:%v, file:%v", dir, file)
+	log.Debugf("imageUrl:%v, dir:%v, file:%v", imageUrl, dir, file)
 
 	file = strings.ToLower(file)
 	pos := strings.LastIndex(file, ".")
 	if pos == -1 {
-		log.WithFields(logField).WithField("position", "NotFindAnyDot").Error("invalid suffix")
+		log.Error("invalid suffix")
 		return false
 	}
 
 	suffix := file[pos+1:]
 	if !SupportImageSuffix[suffix] {
-		log.WithFields(logField).WithField("position", "UnsupportedImageSuffix").Errorf("suffix:%v", suffix)
+		log.Errorf("imageUrl:%v, unsupported image suffix:%v", imageUrl, suffix)
 		return false
 	}
 
+	log.Debugf("imageUrl:%v verify success", imageUrl)
 	return true
 }

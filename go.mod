@@ -5,6 +5,7 @@ go 1.20
 require (
 	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/mozillazg/go-pinyin v0.20.0
+	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.7.0
 )
 

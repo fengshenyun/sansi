@@ -31,15 +31,17 @@ func DownloadPage(url string, debug bool) ([]byte, error) {
 		return nil, err
 	}
 
-	req.Header.Add("Host", "www.san499.com")
-	req.Header.Add("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0")
-	req.Header.Add("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
-	req.Header.Add("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Add("Connection", "keep-alive")
-	req.Header.Add("Referer", "https://www.san499.com/")
-	req.Header.Add("Sec-Fetch-Mode", "no-cors")
-	req.Header.Add("Sec-Fetch-Site", "cross-site")
-	req.Header.Add("TE", "trailers")
+	/*
+		req.Header.Add("Host", "www.san499.com")
+		req.Header.Add("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0")
+		req.Header.Add("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
+		req.Header.Add("Accept-Encoding", "gzip, deflate, br")
+		req.Header.Add("Connection", "keep-alive")
+		req.Header.Add("Referer", "https://www.san499.com/")
+		req.Header.Add("Sec-Fetch-Mode", "no-cors")
+		req.Header.Add("Sec-Fetch-Site", "cross-site")
+		req.Header.Add("TE", "trailers")
+	*/
 
 	resp, err := client.Do(req)
 	if err != nil {

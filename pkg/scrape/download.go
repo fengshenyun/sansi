@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -111,6 +112,11 @@ func DownloadImage(imagePath, imageUrl string) error {
 	}
 
 	log.WithFields(logField).Debugf("response size:%v", len(body))
+
+	dir, _ := filepath.Split(imagePath)
+	if err = os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
+		return err
+	}
 
 	if err = os.WriteFile(imagePath, body, 0666); err != nil {
 		log.WithFields(logField).WithField("position", "WriteImageToFileFailed").Error(err)

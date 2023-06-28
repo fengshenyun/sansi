@@ -24,7 +24,7 @@ var (
 )
 
 func init() {
-	rootCmd.PersistentFlags().BoolVar(&globalFlags.Debug, "debug", true, "enable logging")
+	rootCmd.PersistentFlags().BoolVar(&globalFlags.Debug, "debug", false, "enable logging")
 
 	rootCmd.AddCommand(
 		NewScrapeCommand(),

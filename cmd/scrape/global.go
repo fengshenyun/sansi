@@ -1,4 +1,4 @@
-package cmd
+package main
 
 type GlobalFlags struct {
 	Debug bool

@@ -1,4 +1,4 @@
-package cmd
+package main
 
 import (
 	"fmt"
@@ -9,9 +9,10 @@ import (
 )
 
 var (
-	url      string
-	rootPath string
-	timeout  int
+	url           string
+	rootPath      string
+	timeout       int
+	maxRetryTimes int
 )
 
 func NewScrapeCommand() *cobra.Command {
@@ -24,6 +25,7 @@ func NewScrapeCommand() *cobra.Command {
 	ac.Flags().StringVar(&url, "url", "", "Scrape target url")
 	ac.Flags().IntVar(&timeout, "timeout", 10, "Set connect timeout")
 	ac.Flags().StringVar(&rootPath, "root-path", "./data", "Set root path")
+	ac.Flags().IntVar(&maxRetryTimes, "max-retry-times", 10, "Set max retry times")
 
 	return ac
 }
@@ -34,6 +36,7 @@ func scrapeCommandFunc(cmd *cobra.Command, args []string) {
 	sc.Url = url
 	sc.Timeout = timeout
 	sc.RootPath = rootPath
+	sc.MaxRetryTimes = maxRetryTimes
 
 	if err := scrape.NewWithConfig(sc).Scrape(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

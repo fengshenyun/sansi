@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+option go_package = "github.com/fengshenyun/goproto/sansi";
+
+message AuthorizeReq {
+
+}
+
+message AuthorizeRsp {
+
+}
+
+message TokenReq {
+
+}
+
+message TokenRsp {
+
+}
+
+service OAuthSvr {
+  rpc Authorize(AuthorizeReq) returns (AuthorizeRsp) {}
+  rpc Token(TokenReq) returns (TokenRsp) {}
+};
